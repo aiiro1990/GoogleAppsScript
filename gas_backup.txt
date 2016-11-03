@@ -1,0 +1,11 @@
+  function backup_slide() {
+  // ファイルを指定
+  var file = DriveApp.getFileById('{バックアップ元のスプレッドシートのID}');
+  // 格納先を指定
+  var dest = DriveApp.getFolderById('{バックアップ先のフォルダのID}');
+  // 保存する際のファイル名を指定（下記の場合　「バックアップ年月日：YYYY-MM-DD」_「元の名前」）
+  var name = Utilities.formatDate(new Date(), 'JST', 'yyyy-MM-dd') + '_' + file.getName();
+
+  // makeCopyに、上記のファイル名と上記の格納先を指定
+  file.makeCopy( name, dest);
+}
