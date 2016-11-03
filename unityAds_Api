@@ -1,0 +1,93 @@
+function unityMain(){
+  // =*=*=*=*=*=*=*=*=*=* ▼ここから設定▼ =*=*=*=*=*=*=*=*=*=* //  
+  var spreadsheetID = '{スプレッドシートのID}'; // スプレッドシートのID
+  var sheetName = "{記入するシートの名前}" // 記入するシートの名前
+
+  var apiKey = "{UnityAdsのapiKEY}"; // UnityAdsのapiKEY
+  var sorceIds = ["{広告ソースのID}", // 広告ソースのID (プラットフォーム毎に記載)
+                  "{広告ソースのID}"];
+  var splitBy = "source";
+  var fields = "";
+  var scale = "day"; //1日ごとのデータ
+  var start = -3; // 3日間前から
+  var end = 0; // 昨日まで
+  
+  var updateRangeWidth = 12; //1プラットフォーム当たりに必要な列の数。
+  var startCol = 1; //データ記入範囲の一番左の列の番号（e.g. A列=1）
+  var startRow = 3; //データ記入範囲の一番上の行の番号
+  
+  // =*=*=*=*=*=*=*=*=*=* ▲ここまで設定▲ =*=*=*=*=*=*=*=*=*=* //
+
+  
+  
+  
+  
+  var ss = SpreadsheetApp.openById(spreadsheetID);
+  var sheet = ss.getSheetByName(sheetName);  
+  
+  var dateYesterday = setDate(-1);
+  var dateCheck = sheet.getRange(startRow,startCol).getDisplayValue().replace(/\s+/g, "");
+  
+  // 前日の日付がすでにある場合は行の追加処理を行わない。
+  if(dateCheck==dateYesterday){ 
+    Logger.log("前日の日付が既に有。行の追加無");
+  }else{
+    sheet.insertRowAfter(startRow-1);    
+  }
+  
+  // OS（sorceIds）毎にunityよりCSVデータを取得し、シートに張り付ける
+  
+  Logger.log("write csvArray to sheet start...");
+  for(var j=0; j<sorceIds.length; j++){
+    var csvData = unityApi(apiKey,sorceIds[j],splitBy,fields,scale,start,end);
+    var height = csvData.length;
+    var width ;
+    var tempArray;
+    var ecpm;
+    
+    for (var i=0; i<height-2; i++){
+      width = csvData[height-i-2].length;
+      tempArray = new Array(csvData[height-i-2]);
+      
+      // 日付とrevenueの値から""を削除 ["20.0" --> 20.0]
+      tempArray[0][0] = tempArray[0][0].replace(/\"/g,"").substring(0,10);
+      tempArray[0][width-1] = tempArray[0][width-1].replace(/\"/g,"");
+      // シートに書き込み      
+      sheet.getRange(startRow+i,startCol+j*updateRangeWidth,1,width).setValues(tempArray);
+      
+      //ecpmを計算してシートに記入。
+      if(tempArray[0][width-1-2]) {ecpm = (tempArray[0][width-1] / tempArray[0][width-1-2])*1000;}
+      else{ecpm="";}
+      sheet.getRange(startRow+i,startCol+width+j*updateRangeWidth,1,1).setValue(ecpm);
+      Logger.log("ecpm:"+ecpm);
+    }
+  }
+  Logger.log("write csvArray to sheet Complate!");
+}
+
+
+
+// UnityAdsからCSVを取得し、取得したCSVを配列化し、返す
+function unityApi(apiKey,sorceIds,splitBy,fields,scale,start,end) {
+
+  var response = UrlFetchApp.fetch('http://gameads-admin.applifier.com/stats/monetization-api?apikey='+apiKey+'&fields='+fields+'&splitBy='+splitBy+'&scale='+scale+'&start='+start+'&end='+end+'&sourceIds='+sorceIds);
+  Logger.log("Response data: \n "+response);
+  if (response.getResponseCode() != 200) {
+    Logger.log("Error: response code: "+ response.getResponseCode() );
+    throw "error: response code: " + response.getResponseCode();
+  }
+
+  Logger.log("csv to Array start...");
+  
+  var csvArray = [];
+  var tempArray = response.getContentText().split("\n");
+
+  // CSVを配列化 （1行ずつテキストデータを取り出し、","で分割したものを、配列として挿入）
+  for (var i=0; i<tempArray.length; i++){
+    csvArray[i] = tempArray[i].split(",");
+  }
+  
+  Logger.log("csv to Array Complate!");
+  
+  return csvArray;
+}
