@@ -1,0 +1,94 @@
+function applovinMain(){
+  // =*=*=*=*=*=*=*=*=*=* ▼ここから設定▼ =*=*=*=*=*=*=*=*=*=* //  
+  var spreadsheetID = '{スプレッドシートのID}'; // スプレッドシートのID
+  var sheetName = "{記入するシートの名前}" // 記入するシートの名前
+
+  var apiKey = "{apiKey}";
+  var startNum = -1; //今日を基準として、何日前のデータを取得するか（e.g.今日=0, 昨日=-1, 一週間前=-7）
+  var columns = "day,package_name,platform,impressions,clicks,ctr,revenue,ecpm";
+  var filterInfo = [["ios","{filterId}"],
+                    ["tvos","{filterId}"],
+                    ["android","{filterId}"]];
+  
+  var updateRangeWidth = 10; //1プラットフォーム当たりに必要な列の数。
+  var startCol = 1; //データ記入範囲の一番左の列の番号（e.g. A列=1）
+  var startRow = 3; //データ記入範囲の一番上の行の番号
+  
+  // =*=*=*=*=*=*=*=*=*=* ▲ここまで設定▲ =*=*=*=*=*=*=*=*=*=* //
+
+  
+  
+  
+  
+  var ss = SpreadsheetApp.openById(spreadsheetID);
+  var sheet = ss.getSheetByName(sheetName);  
+  
+  var dateYesterday = setDate(-1);
+  var dateCheck = sheet.getRange(startRow,startCol).getDisplayValue();
+  
+
+  // 前日の日付がすでにある場合は行の追加処理を行わない。
+  if(dateCheck==dateYesterday){ 
+    Logger.log("前日の日付が既に有。行の追加無");
+  }else{
+    sheet.insertRowAfter(startRow-1);
+  }
+  
+  
+  // アプリ毎（OS,package_name）にAppLovinよりCSVデータを取得し、シートに張り付ける
+  Logger.log("write csvArray to sheet start...");
+  
+  var start = setDate(startNum);
+  var end = start; //CSVが日付順に並ばない仕様なので、基本的に開始日＝終了日とするのが良いと思われます
+  // 追記 Sort使えばいけたのかもしれないですが、12時間毎にトリガー設置する形で不便が無かったため見送り
+  
+  for(var j=0; j<filterInfo.length; j++){
+    
+    var filter_platform = filterInfo[j][0];
+    var filter_package_name = filterInfo[j][1];
+    
+    var csvData = applovinApi( apiKey,start,end,columns,filter_platform,filter_package_name );
+    var height = csvData.length;
+    var width ;
+    var tempArray;
+    
+    for (var i=0; i<height-2; i++){
+      width = csvData[height-i-2].length;
+      tempArray = new Array(csvData[height-i-2]);
+      
+      // revenueの値から$を削除 [$20.0 --> 20.0]
+      tempArray[0][width-2] = tempArray[0][width-2].replace(/\$/g,"");
+      // シートに書き込み      
+      sheet.getRange(startRow+i,1+j*updateRangeWidth,1,width).setValues(tempArray);
+    }
+  }
+  Logger.log("write csvArray to sheet Complate!");
+}
+
+
+
+
+// AppLovinからCSVを取得し、取得したCSVを配列化し、返す
+function applovinApi( apiKey,start,end,columns,filter_platform,filter_package_name ) {
+  var response = UrlFetchApp.fetch('http://r.applovin.com/report?api_key='+apiKey+'&start='+start+'&end='+end+'&columns='+columns+'&filter_platform='+filter_platform+'&filter_package_name='+filter_package_name+'&format=csv');
+  Logger.log("Response code: " + response.getResponseCode());
+  Logger.log("Response data: \n " + response);
+  if (response.getResponseCode() != 200) {
+    Logger.log("Error: response code: "+ response.getResponseCode() );
+    throw "error: response code: " + response.getResponseCode();
+  }
+
+  Logger.log("csv to Array start...");
+  
+  var csvArray = [];
+  var tempArray = response.getContentText().split("\n");
+
+  // CSVを配列化 （1行ずつテキストデータを取り出し、","で分割したものを、配列として挿入）
+  for (var i=0; i<tempArray.length; i++){
+    csvArray[i] = tempArray[i].split(",");
+  }
+  
+  Logger.log("csv to Array Complate!");
+  
+  return csvArray;
+}
