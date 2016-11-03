@@ -1,0 +1,291 @@
+/*
+  スプレッドシートに用意したコンフィグシートからAPIKeyやタイトル名などを取得してきて、
+  それを使用してTapjoyのAPIから数値を引っ張ってきて、スプレッドシートのタイトル毎のシートに数値を記入するスクリプト。
+  GASでトリガーを指定して定期的にmainを実行すると、自動集計が可能。
+  スプレッドシートの形状、雛形に依存しているのでスクリプト単品では流用難。部品取り用に保存。
+*/
+
+
+
+function main(){
+// =*=*=*=*=*=*=*=*=*=* ▼ここから設定▼ =*=*=*=*=*=*=*=*=*=* //
+  
+  var spreadsheetID = '{スプレッドシートのID}'; // スプレッドシートのID
+  var configDataRangeName = "{「名前付き範囲」の名前}"; // コンフィグデータシートの、コンフィグデータ部の、「名前付き範囲」の名前。
+
+  var urlFetchWaitTime = 1; //second APIアクセスが集中しないようにするためのブランク。1秒程度を想定。
+  var startCol = 1; //データ記入範囲の一番左の列の番号（e.g. A列=1）
+  var startRow = 4; //データ記入範囲の一番上の行の番号 
+  
+// =*=*=*=*=*=*=*=*=*=* ▲ここまで設定▲ =*=*=*=*=*=*=*=*=*=* //
+  
+  // 最初に取得する要素の値がゼロの時、以降の要素の数値が取得できないため、最初に取得する要素はinstallではなくDAUが良いです。書込用配列を作る時に順番注意
+  var metricsArray = ["daily_active_users",
+                      "installs",
+                      "daily_paying_users",
+                      "revenue",
+                      "number_of_purchases",
+                      "number_of_sessions",
+                      "average_time_spent"]; //ここを変更すると諸々の調整が必要
+  var retentionArray = ["day_1_retention",
+                        "day_3_retention",
+                        "day_7_retention",
+                        "day_14_retention",
+                        "day_30_retention",
+                        "day_60_retention",
+                        "day_90_retention"]; //ここを変更すると諸々の調整が必要
+  var fromDateNum = -1; //いつのデータを取得するか（昨日＝-1，一週間前=-7）　通常-1を想定
+
+
+  // ここから処理の開始
+  addNewContentSheet(); //configに沿ったシートがあるか検索
+  
+  var ss = SpreadsheetApp.openById(spreadsheetID);
+  var configDataRange = ss.getRangeByName(configDataRangeName);
+  var configDataValues = configDataRange.getValues();
+  
+  var toDateNum = fromDateNum; 
+
+  var fromDate = selectDate(fromDateNum,'yyyy/MM/dd');
+  var toDate = selectDate(toDateNum,'yyyy/MM/dd');
+  var dateYesterday = selectDate(-1,'yyyy-MM-dd');
+  
+  
+  //タイトルとAPIKeyのどちらかに記入漏れがある項目を配列から削除
+  var configDataArray=[];
+  for (var i=0; i<configDataValues.length; i++){
+    if (configDataValues[i][0]&&configDataValues[i][1]){ configDataArray.push(configDataValues[i]); }
+  }
+  Logger.log(configDataArray);
+  
+  //ここからタイトル毎の処理
+  for(var i=0; i<configDataArray.length; i++){
+    var sheetName = configDataArray[i][0]; // 記入するシートの名前
+    
+    var apiKey = configDataArray[i][1]; 
+    var filterArray = [];
+    var filterKey = "os_name";
+    if (configDataArray[i][2]==="TRUE"){filterArray.push("iOS");}
+    if (configDataArray[i][3]==="TRUE"){filterArray.push("Android");}
+    
+    // =*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=* //
+    var sheet = ss.getSheetByName(sheetName);
+    var dateCheck = sheet.getRange(startRow,startCol).getDisplayValue();
+
+    // =*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=* //
+    // 前日の日付がすでにある場合は行の追加処理を行わない。
+    if(dateCheck==dateYesterday){Logger.log("前日の日付が既に有。行の追加無");}
+    else{sheet.insertRowAfter(startRow-1);}
+  
+    var tempTapjoyDataArray=[]
+    // ここからTapjoyで取得する各OS毎の操作
+    for (var j=0; j<filterArray.length;j++){
+      var filtersObj={};
+      var tapjoyDataArray=[];
+      filtersObj[filterKey] = filterArray[j];
+    
+      tapjoyDataArray = getTapjoyApiData(apiKey, fromDate, toDate, metricsArray, filtersObj);
+      tempTapjoyDataArray.push(tapjoyDataArray);
+      Utilities.sleep(urlFetchWaitTime*1000);
+      
+    }
+    Logger.log(tempTapjoyDataArray);
+    
+    var writeArray=[];
+    // OS数が2未満の場合とで場合分け
+    var targetColAdjust=0;
+    if(filterArray.length<2){
+      writeArray.push(tempTapjoyDataArray[0][0][0]); //date
+      if(filterArray[0]=="Android"){writeArray.push("");}
+      writeArray.push(tempTapjoyDataArray[0][0][2]); //new
+      writeArray.push("");
+      writeArray.push(tempTapjoyDataArray[0][0][1]); //dau
+      writeArray.push("");
+      writeArray.push(tempTapjoyDataArray[0][0][3]); //pu
+      writeArray.push("");     
+      writeArray.push(tempTapjoyDataArray[0][0][4]); //revenu
+      writeArray.push("");
+      writeArray.push(tempTapjoyDataArray[0][0][5]); //課金回数
+      writeArray.push("");
+      writeArray.push(tempTapjoyDataArray[0][0][6]); //セッション数
+      writeArray.push("");
+      writeArray.push(tempTapjoyDataArray[0][0][7]); //平均セッション時間
+    }else{
+    writeArray.push(tempTapjoyDataArray[0][0][0]); //date
+    writeArray.push(tempTapjoyDataArray[0][0][2]); //new
+    writeArray.push(tempTapjoyDataArray[1][0][2]);
+    writeArray.push(tempTapjoyDataArray[0][0][1]); //dau
+    writeArray.push(tempTapjoyDataArray[1][0][1]);
+    writeArray.push(tempTapjoyDataArray[0][0][3]); //pu
+    writeArray.push(tempTapjoyDataArray[1][0][3]);      
+    writeArray.push(tempTapjoyDataArray[0][0][4]); //revenu
+    writeArray.push(tempTapjoyDataArray[1][0][4]);
+    writeArray.push(tempTapjoyDataArray[0][0][5]); //課金回数
+    writeArray.push(tempTapjoyDataArray[1][0][5]);
+    writeArray.push(tempTapjoyDataArray[0][0][6]); //セッション数
+    writeArray.push(tempTapjoyDataArray[1][0][6]);
+    writeArray.push(tempTapjoyDataArray[0][0][7]); //平均セッション時間
+    writeArray.push(tempTapjoyDataArray[1][0][7]);
+    }
+
+    sheet.getRange(startRow, startCol, 1, writeArray.length).setValues(new Array(writeArray));
+
+    
+    // =*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=* //
+    // ここから継続率の取得＋記入
+    if(configDataArray[i][4]==="TRUE"){
+    
+      var retentionTargetCol = startCol+(metricsArray.length*2);
+      var tempObj={};
+      var retentionDateArray = [1,3,7,14,30,60,90];
+      
+      for (var j=0; j<retentionDateArray.length; j++){
+        var retentionDateNum = retentionDateArray[j];
+        var retentionTargetDate = selectDate(fromDateNum-retentionDateNum,'yyyy/MM/dd');
+        var retentionData = getTapjoyApiData(apiKey, retentionTargetDate, retentionTargetDate, new Array(retentionArray[j]),tempObj);
+        sheet.getRange(startRow+retentionDateNum, retentionTargetCol+1+j).setValue(Number(retentionData[0][1])*0.01);
+      }
+      
+    }
+  }
+  
+  // slackにポストします
+  var payload = {"text" : "<{リンクの飛び先のURL}|{表示させる文字列}",
+                 "channel" : "{Slackのチャンネル}"};
+  postSlack(payload); 
+}
+
+
+
+
+/* ================================================================================ */
+// 引数を入れて関数をたたくと、日付毎に整形したTapjoyのAPIデータを、配列で返します。
+// エラーなどによりデータが取得できなかった場合は-1を返します。
+function getTapjoyApiData(apiKey, fromDate, toDate, metricsArray, filtersObj) {
+  
+  // APIリクエストURLの生成
+  var requestUrl = tapjoyApiRequestUrlCreate(apiKey, fromDate, toDate, metricsArray, filtersObj);
+  
+  // UrlFetchでJSONのデータを取得してParseで変換（エラー発生時は-1を取得）
+  var successResponseCode = 200;
+  var jsonData = urlFetchToGetJson(requestUrl,successResponseCode);
+  if (jsonData == -1){ return -1; }
+  Logger.log(jsonData);
+  
+  // 取得する期間の日付の一覧を配列に格納
+  var startDate = fromDate, endDate = toDate; //startDateとendDateは日付の文字列(""yyyy/MM/dd" のみ対応)
+  var datesArray = getDatesArrayInPeriod(startDate,endDate);
+  if (datesArray.length == 0){ return -1; }
+  
+  // JSONデータを日付毎に配列化
+  var tempArray = [], returnArray = [];
+  for (var n=0; n<datesArray.length; n++){
+    tempArray = [];
+    for (var i=0; i<metricsArray.length; i++){
+      tempArray[0] = datesArray[n] ;
+      tempArray[1+i] = jsonData[metricsArray[i]][datesArray[n]];
+    }
+    returnArray[n] = tempArray;
+  }
+  Logger.log("getTapjoyApiData(): Success!:");  
+  Logger.log(returnArray);
+  return returnArray;
+}
+
+
+
+/* ================================================================================ */
+// tapjoyのAPIリクエストURLを返します
+function tapjoyApiRequestUrlCreate(apiKey, fromDate, toDate, metricsArray, filtersObj)　{
+  // リクエストURLの作成
+  var requestUrl = 'https://rpc.tapjoy.com/api/v1/exports';
+  requestUrl = requestUrl + '?api_key=' + apiKey + '&from=' +  fromDate + '&to=' + toDate; 
+  
+  for (var i=0; i<metricsArray.length; i++){ requestUrl = requestUrl + '&metrics[]=' + metricsArray[i]; }
+  if (filtersObj["os_name"]){ requestUrl = requestUrl + '&os_name=' + filtersObj["os_name"]; } 
+  if (filtersObj["country"]){ requestUrl = requestUrl + '&country=' + filtersObj["country"]; }
+  
+  Logger.log("tapjoyApiRequestUrlCreate(): Success!:");
+  Logger.log(requestUrl);
+  return requestUrl
+}
+
+/* ================================================================================ */
+// UrlFetchでJSONのデータを取得し、Parseで整形して返します（エラー発生時は-1を返す）
+function urlFetchToGetJson (requestUrl,successResponseCode){
+  var response = UrlFetchApp.fetch(requestUrl);
+
+  if (response.getResponseCode() != successResponseCode) {
+    Logger.log("error: response code = " + response.getResponseCode() );
+    return -1;
+  }
+  var jsonData = JSON.parse(response.getContentText());
+  Logger.log("urlFetchToGetJson(): Success!:");
+  Logger.log(jsonData);
+  return jsonData;
+}
+
+/* ================================================================================ */
+// 取得した期間の日付を配列に格納
+//startDateとendDateは日付の文字列(""yyyy/MM/dd" のみ対応)
+function getDatesArrayInPeriod(startDate,endDate){
+  var start = new Date(startDate);
+  var end = new Date(endDate);
+  var tempDate, datesArray = [], counta = 0;
+  for (var d=start; d<=end; d.setDate(d.getDate()+1)){
+    tempDate = Utilities.formatDate( d, 'JST', 'yyyy-MM-dd');
+    datesArray[counta] = tempDate;
+    counta = counta + 1;
+  }
+  Logger.log("getDatesArrayInPeriod(): Success!:");
+  Logger.log(datesArray);
+  return datesArray;
+}
+
+/* ================================================================================ */
+// 二つの配列を渡すと、それぞれの要素を組み合わせた二次配列を返します。
+// e.g. [[array1[i],array2[j]],[array1[i],array2[j+1]], ... [array1[i+1],array2[j]], ...]
+// 片方が配列でない場合、空欄だけの配列[""]との組み合わせを返します。両方とも配列でない場合、-1を返します。
+function twoArrayCombination(array1,array2){
+  if(!array1.length || !array2.length){ if(!array1.length){ if(!array2.length){return -1;}else{array1=[""];} }else{return array2=[""];} }
+  var returnArray=[], tempArray1=[], tempArray2=[];
+  for(var i=0; i<array1.length; i++){
+    tempArray1 = array1[i];
+    for(var j=0; j<array2.length; j++){
+      tempArray2 = array2[j];
+      returnArray.push([tempArray1,tempArray2]);
+    }
+  }
+  Logger.log("twoArrayCombination(): Success!");
+  return returnArray;
+}
+
+
+/* ================================================================================ */
+
+function selectDate(changeDate,dateType) {
+  var date = new Date();
+  if(!dateType){dateType = "yyyy-MM-dd";}
+  date.setDate(date.getDate() + changeDate);
+  var formattedDate = Utilities.formatDate(date, "Asia/Tokyo", dateType);
+  
+  Logger.log('select Date is = ' + date);
+  Logger.log('select formatDate is = ' + formattedDate);
+  
+  return formattedDate;
+}
+/* ================================================================================ */
+// Slackポスト関数 @param payload ポスト詳細
+function postSlack(payload) {
+
+  var options = {
+    "method" : "POST",
+    "payload" : JSON.stringify(payload)
+  }
+
+  var url = "{SlackのWebHooks URLをここに指定}"; // SlackのWebHooks URL
+  var response = UrlFetchApp.fetch(url, options);
+  var content = response.getContentText("UTF-8");
+}
+
+/* ================================================================================ */
